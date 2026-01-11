@@ -8,6 +8,7 @@ DATA_FILE = "data.json"
 EPOCH_SECONDS = 300
 TOTAL_EPOCHS = 288
 
+
 def load_data():
     try:
         with open(DATA_FILE, "r") as f:
@@ -15,9 +16,11 @@ def load_data():
     except:
         return {}
 
+
 def save_data(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f)
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = {
@@ -26,7 +29,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "last_epoch": 0
     }
     save_data(data)
-    await update.message.reply_text("Timer started. Epoch 1 running.")
+    await update.message.reply_text("Timer started. Epoch 1 in progress.")
+
 
 async def time_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -44,9 +48,11 @@ async def time_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Remaining in current epoch: {remaining} seconds"
     )
 
+
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data({})
-    await update.message.reply_text("Timer reset. Send 'start' to begin again.")
+    await update.message.reply_text("Timer reset. Send /start to begin again.")
+
 
 async def epoch_checker(context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -55,15 +61,27 @@ async def epoch_checker(context: ContextTypes.DEFAULT_TYPE):
 
     now = int(time.time())
     elapsed = now - data["start_time"]
-    epoch = elapsed // EPOCH_SECONDS
+    finished_epoch = elapsed // EPOCH_SECONDS
 
-    if epoch > data.get("last_epoch", 0) and epoch <= TOTAL_EPOCHS:
+    if finished_epoch > data.get("last_epoch", 0) and finished_epoch <= TOTAL_EPOCHS:
+        next_epoch = finished_epoch + 1
+
+        if next_epoch <= TOTAL_EPOCHS:
+            message = (
+                f"Epoch {finished_epoch} Completed ⏹️\n"
+                f"Epoch {next_epoch} In Progress. Tap to participate 👇"
+            )
+        else:
+            message = f"Epoch {finished_epoch} Completed ⏹️\nAll epochs completed."
+
         await context.bot.send_message(
             chat_id=data["chat_id"],
-            text=f"Epoch {epoch} over"
+            text=message
         )
-        data["last_epoch"] = epoch
+
+        data["last_epoch"] = finished_epoch
         save_data(data)
+
 
 app = ApplicationBuilder().token(os.environ["BOT_TOKEN"]).build()
 
