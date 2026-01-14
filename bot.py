@@ -73,8 +73,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/on – Start or resume notifications\n"
         "/off – Pause notifications only\n"
         "/status – Show current status\n"
-        "/tap add – Manually add a tapped epoch\n"
-        "/tap remove – Manually remove a tapped epoch\n"
+        "/tapadd – Manually add a tapped epoch\n"
+        "/tapremove – Manually remove a tapped epoch\n"
         "/reset – Reset everything"
     )
 
