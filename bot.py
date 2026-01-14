@@ -64,18 +64,13 @@ def get_reward_tier(u):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📘 About This Bot\n\n"
-        "• Tracks your personal tapped epochs\n"
-        "• Rewards depend only on epochs YOU tap\n"
-        "• Skipped epochs do not reduce rewards\n"
-        "• 1 epoch = 5 minutes (288 per day)\n\n"
-        "Commands:\n"
-        "/on – Start or resume notifications\n"
-        "/off – Pause notifications only\n"
-        "/status – Show current status\n"
-        "/tapadd – Manually add a tapped epoch\n"
-        "/tapremove – Manually remove a tapped epoch\n"
-        "/reset – Reset everything"
+        "⏱️ AckiNacki Epoch Timer – Intro\n\n"
+        "Start your day normally. After you tap your first Popit for the new day, "
+        "send /on immediately. This sets the start time for your personal 5-minute epochs.\n\n"
+        "Tap calculations are based on a prediction of 70 taps per epoch. For best accuracy, "
+        "complete exactly 70 taps within a single epoch.\n\n"
+        "All remaining taps and efficiency shown by the bot are calculated using this "
+        "70 taps per epoch model."
     )
 
 
@@ -84,23 +79,22 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     now = int(time.time())
 
-    if uid not in data:
-        data[uid] = {
-            "cycle_start": now,
-            "tapped_epochs": 0,
-            "last_epoch_seen": 0,
-            "notify": True,
-            "active": True,
-            "current_decision": None,
-            "chat_id": update.effective_chat.id
-        }
-    else:
-        data[uid]["notify"] = True
-        data[uid]["active"] = True
+    data[uid] = {
+        "cycle_start": now,
+        "last_epoch_sent": 0,
+        "tapped_epochs": 0,
+        "current_decision": None,
+        "notify": True,
+        "active": True,
+        "chat_id": update.effective_chat.id
+    }
 
     save_data(data)
 
-    await update.message.reply_text("🔔 Notifications ON. Epoch tracking active.")
+    await update.message.reply_text(
+        "🔔 Notifications ON\n"
+        "⏱️ Your personal 5-minute epoch cycle has started."
+    )
 
 
 async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,11 +116,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del data[uid]
         save_data(data)
 
-    await update.message.reply_text("♻️ All data reset. Tracking stopped.")
-
-
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_status(context, update.effective_user.id, force=True)
+    await update.message.reply_text("♻️ Reset complete. Tracking stopped.")
 
 
 async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,7 +124,7 @@ async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
 
     if uid not in data:
-        await update.message.reply_text("Tracking not active. Use /on first.")
+        await update.message.reply_text("Use /on first.")
         return
 
     if not context.args:
@@ -155,25 +145,29 @@ async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Tapped epochs already zero.")
 
 
-# ---------------- Status Logic ----------------
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_status(context, update.effective_user.id, force=True)
+
+
+# ---------------- Core Epoch Logic ----------------
 
 async def send_status(context, user_id, force=False):
     data = load_data()
     uid = str(user_id)
 
-    if uid not in data or not data[uid].get("active"):
-        return
-
-    if not data[uid].get("notify") and not force:
+    if uid not in data or not data[uid]["active"]:
         return
 
     now = int(time.time())
     start = data[uid]["cycle_start"]
+
     elapsed = now - start
+    epoch = elapsed // EPOCH_SECONDS + 1
 
-    global_epoch = min(elapsed // EPOCH_SECONDS + 1, TOTAL_EPOCHS)
+    if epoch > TOTAL_EPOCHS:
+        epoch = TOTAL_EPOCHS
 
-    if not force and global_epoch == data[uid]["last_epoch_seen"]:
+    if not force and epoch == data[uid]["last_epoch_sent"]:
         return
 
     # finalize previous epoch
@@ -181,26 +175,29 @@ async def send_status(context, user_id, force=False):
         data[uid]["tapped_epochs"] += 1
 
     data[uid]["current_decision"] = None
-    data[uid]["last_epoch_seen"] = global_epoch
+    data[uid]["last_epoch_sent"] = epoch
     save_data(data)
 
-    remaining_cycle = TOTAL_EPOCHS - global_epoch
-    tapped_epochs = data[uid]["tapped_epochs"]
+    if not data[uid]["notify"] and not force:
+        return
 
-    ts, te, tier = get_reward_tier(tapped_epochs)
-    remaining_in_tier = te - tapped_epochs if ts else 0
+    remaining_cycle = TOTAL_EPOCHS - epoch
+    tapped = data[uid]["tapped_epochs"]
 
-    used_taps = tapped_epochs * TAPS_PER_EPOCH
+    ts, te, tier = get_reward_tier(tapped)
+    remaining_tier = te - tapped if ts else 0
+
+    used_taps = tapped * TAPS_PER_EPOCH
     remaining_taps = max(MAX_TAPS - used_taps, 0)
 
     text = (
         "📊 User 24-Hour Cycle Status\n\n"
-        f"⏱️ Cycle Progress: Epoch {global_epoch} / {TOTAL_EPOCHS}\n"
+        f"⏱️ Cycle Progress: Epoch {epoch} / {TOTAL_EPOCHS}\n"
         f"⌛ Remaining in Cycle: {remaining_cycle} epochs\n\n"
         "👤 User Tapping Progress\n"
-        f"✅ Tapped Epochs: {tapped_epochs}\n"
+        f"✅ Tapped Epochs: {tapped}\n"
         f"🏆 Reward Tier: {tier}\n"
-        f"➡️ Remaining Epochs in This Tier: {remaining_in_tier}\n\n"
+        f"➡️ Remaining Epochs in This Tier: {remaining_tier}\n\n"
         "📈 Tap Statistics\n"
         f"🟢 Total Taps Used: {used_taps}\n"
         f"🔵 Remaining Taps: {remaining_taps} / {MAX_TAPS}"
@@ -261,6 +258,6 @@ app.add_handler(CommandHandler("status", status))
 app.add_handler(CommandHandler("tap", tap))
 app.add_handler(CallbackQueryHandler(button_handler))
 
-app.job_queue.run_repeating(epoch_job, interval=300, first=10)
+app.job_queue.run_repeating(epoch_job, interval=30, first=10)
 
 app.run_polling()
