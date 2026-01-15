@@ -1,6 +1,7 @@
 import time
 import json
 import os
+import asyncio
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -21,6 +22,39 @@ EPOCH_SECONDS = 330
 TOTAL_EPOCHS = 288
 TAPS_PER_EPOCH = 70
 MAX_TAPS = 12000
+
+
+# ---------------- Helpers ----------------
+
+async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type == "private":
+        return True
+
+    member = await context.bot.get_chat_member(chat.id, user.id)
+    return member.status in ("administrator", "creator")
+
+
+async def auto_delete(context, chat_id, message_id, delay=330):
+    await asyncio.sleep(delay)
+    try:
+        await context.bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
+
+async def reply(update, context, text, reply_markup=None):
+    msg = await update.effective_chat.send_message(
+        text=text,
+        reply_markup=reply_markup
+    )
+    if update.effective_chat.type != "private":
+        context.application.create_task(
+            auto_delete(context, msg.chat_id, msg.message_id)
+        )
+    return msg
 
 
 # ---------------- Storage ----------------
@@ -63,25 +97,31 @@ def get_reward_tier(u):
 # ---------------- Commands ----------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+    if not await is_admin(update, context):
+        return
+
+    await reply(
+        update,
+        context,
         "⏱️ AckiNacki Epoch Timer – Intro\n\n"
         "Start your day normally. After you tap your first Popit for the new day, "
-        "send /on immediately. This sets the start time for your personal 5-minute 30 sec epochs.\n\n"
-        "Tap calculations are based on a prediction of 70 taps per epoch. For best accuracy, "
+        "send /on immediately. This sets the start time for your personal 330 SEC epochs.\n\n"
+        "Tap calculations are based on 70 taps per epoch. For best accuracy, "
         "complete exactly 70 taps within a single epoch.\n\n"
-        "All remaining taps and efficiency shown by the bot are calculated using this "
-        "70 taps per epoch model."
+        "All remaining taps and efficiency are calculated using this model."
     )
 
 
 async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+
     data = load_data()
     uid = str(update.effective_user.id)
     now = int(time.time())
 
     job_name = f"epoch_{uid}"
 
-    # cancel old job if exists
     for job in context.job_queue.jobs():
         if job.name == job_name:
             job.schedule_removal()
@@ -99,7 +139,6 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_data(data)
 
-    # schedule per-user epoch job (FIRST RUN AFTER 300s)
     context.job_queue.run_repeating(
         callback=epoch_job,
         interval=EPOCH_SECONDS,
@@ -108,14 +147,19 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data={"uid": uid}
     )
 
-    await update.message.reply_text(
+    await reply(
+        update,
+        context,
         "🔔 Notifications ON\n"
         "⏱️ Your personal 330 SEC epoch cycle has started.\n"
-        "📩 Epoch 1 Ongoing."
+        "📩 Epoch 1 Ongoing"
     )
 
 
 async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+
     data = load_data()
     uid = str(update.effective_user.id)
 
@@ -123,19 +167,18 @@ async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data[uid]["notify"] = False
         save_data(data)
 
-    await update.message.reply_text(
-        "🔕 Notifications OFF.\nEpoch timing continues silently."
-    )
+    await reply(update, context, "🔕 Notifications OFF. Epoch timing continues.")
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+
     data = load_data()
     uid = str(update.effective_user.id)
 
     if uid in data:
         job_name = data[uid].get("job_name")
-
-        # cancel job
         for job in context.job_queue.jobs():
             if job.name == job_name:
                 job.schedule_removal()
@@ -143,36 +186,42 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del data[uid]
         save_data(data)
 
-    await update.message.reply_text("♻️ Reset complete. Tracking stopped.")
+    await reply(update, context, "♻️ Reset complete. Tracking stopped.")
 
 
 async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+
     data = load_data()
     uid = str(update.effective_user.id)
 
     if uid not in data:
-        await update.message.reply_text("Use /on first.")
+        await reply(update, context, "Use /on first.")
         return
 
     if not context.args:
-        await update.message.reply_text("Use /tap add or /tap remove")
+        await reply(update, context, "Use /tap add or /tap remove")
         return
 
     if context.args[0] == "add":
         data[uid]["tapped_epochs"] += 1
         save_data(data)
-        await update.message.reply_text("✅ One tapped epoch added.")
+        await reply(update, context, "✅ One tapped epoch added.")
 
     elif context.args[0] == "remove":
         if data[uid]["tapped_epochs"] > 0:
             data[uid]["tapped_epochs"] -= 1
             save_data(data)
-            await update.message.reply_text("➖ One tapped epoch removed.")
+            await reply(update, context, "➖ One tapped epoch removed.")
         else:
-            await update.message.reply_text("Tapped epochs already zero.")
+            await reply(update, context, "Tapped epochs already zero.")
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+
     await send_status(context, update.effective_user.id, force=True)
 
 
@@ -187,17 +236,15 @@ async def send_status(context, user_id, force=False):
 
     now = int(time.time())
     start = data[uid]["cycle_start"]
-
     elapsed = now - start
-    epoch = elapsed // EPOCH_SECONDS + 1
 
+    epoch = elapsed // EPOCH_SECONDS + 1
     if epoch > TOTAL_EPOCHS:
         epoch = TOTAL_EPOCHS
 
     if not force and epoch == data[uid]["last_epoch_sent"]:
         return
 
-    # finalize previous epoch
     if data[uid]["current_decision"] == "tapped":
         data[uid]["tapped_epochs"] += 1
 
@@ -237,11 +284,16 @@ async def send_status(context, user_id, force=False):
         ]
     ])
 
-    await context.bot.send_message(
+    msg = await context.bot.send_message(
         chat_id=data[uid]["chat_id"],
         text=text,
         reply_markup=keyboard
     )
+
+    if context.bot.get_chat(data[uid]["chat_id"]).type != "private":
+        context.application.create_task(
+            auto_delete(context, msg.chat_id, msg.message_id)
+        )
 
 
 # ---------------- Button Handler ----------------
