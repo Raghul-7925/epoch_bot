@@ -79,6 +79,13 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     now = int(time.time())
 
+    job_name = f"epoch_{uid}"
+
+    # cancel old job if exists
+    for job in context.job_queue.jobs():
+        if job.name == job_name:
+            job.schedule_removal()
+
     data[uid] = {
         "cycle_start": now,
         "last_epoch_sent": 0,
@@ -86,14 +93,25 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "current_decision": None,
         "notify": True,
         "active": True,
-        "chat_id": update.effective_chat.id
+        "chat_id": update.effective_chat.id,
+        "job_name": job_name
     }
 
     save_data(data)
 
+    # schedule per-user epoch job (FIRST RUN AFTER 300s)
+    context.job_queue.run_repeating(
+        callback=epoch_job,
+        interval=EPOCH_SECONDS,
+        first=EPOCH_SECONDS,
+        name=job_name,
+        data={"uid": uid}
+    )
+
     await update.message.reply_text(
         "🔔 Notifications ON\n"
-        "⏱️ Your personal 5-minute epoch cycle has started."
+        "⏱️ Your personal 5-minute epoch cycle has started.\n"
+        "📩 First update will arrive after 5 minutes."
     )
 
 
@@ -105,7 +123,9 @@ async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data[uid]["notify"] = False
         save_data(data)
 
-    await update.message.reply_text("🔕 Notifications OFF. Epoch counting continues.")
+    await update.message.reply_text(
+        "🔕 Notifications OFF.\nEpoch timing continues silently."
+    )
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,6 +133,13 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
 
     if uid in data:
+        job_name = data[uid].get("job_name")
+
+        # cancel job
+        for job in context.job_queue.jobs():
+            if job.name == job_name:
+                job.schedule_removal()
+
         del data[uid]
         save_data(data)
 
@@ -238,12 +265,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_reply_markup(None)
 
 
-# ---------------- Scheduler ----------------
+# ---------------- Epoch Job ----------------
 
 async def epoch_job(context: ContextTypes.DEFAULT_TYPE):
-    data = load_data()
-    for uid in data:
-        await send_status(context, uid)
+    uid = context.job.data["uid"]
+    await send_status(context, uid)
 
 
 # ---------------- App ----------------
@@ -257,7 +283,5 @@ app.add_handler(CommandHandler("reset", reset))
 app.add_handler(CommandHandler("status", status))
 app.add_handler(CommandHandler("tap", tap))
 app.add_handler(CallbackQueryHandler(button_handler))
-
-app.job_queue.run_repeating(epoch_job, interval=30, first=10)
 
 app.run_polling()
