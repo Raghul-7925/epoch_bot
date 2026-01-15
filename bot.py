@@ -14,7 +14,11 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
+# ================= CONFIG =================
+
 BOT_TOKEN = os.environ["BOT_TOKEN"]
+OWNER_ID = 1837260280   # only allowed in groups
+AUTO_DELETE_SECONDS = 320
 
 DATA_FILE = "data.json"
 
@@ -23,21 +27,26 @@ TOTAL_EPOCHS = 288
 TAPS_PER_EPOCH = 70
 MAX_TAPS = 12000
 
+# =========================================
 
-# ---------------- Helpers ----------------
 
-async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------------- Permission Check ----------------
+
+async def is_allowed(update: Update):
     chat = update.effective_chat
     user = update.effective_user
 
+    # DM: allow everyone
     if chat.type == "private":
         return True
 
-    member = await context.bot.get_chat_member(chat.id, user.id)
-    return member.status in ("administrator", "creator")
+    # Group: only owner ID
+    return user.id == OWNER_ID
 
 
-async def auto_delete(context, chat_id, message_id, delay=330):
+# ---------------- Auto Delete ----------------
+
+async def auto_delete(context, chat_id, message_id, delay=AUTO_DELETE_SECONDS):
     await asyncio.sleep(delay)
     try:
         await context.bot.delete_message(chat_id, message_id)
@@ -45,7 +54,7 @@ async def auto_delete(context, chat_id, message_id, delay=330):
         pass
 
 
-async def reply(update, context, text, reply_markup=None):
+async def send_reply(update, context, text, reply_markup=None):
     msg = await update.effective_chat.send_message(
         text=text,
         reply_markup=reply_markup
@@ -97,23 +106,22 @@ def get_reward_tier(u):
 # ---------------- Commands ----------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
+    if not await is_allowed(update):
         return
 
-    await reply(
+    await send_reply(
         update,
         context,
         "⏱️ AckiNacki Epoch Timer – Intro\n\n"
-        "Start your day normally. After you tap your first Popit for the new day, "
-        "send /on immediately. This sets the start time for your personal 330 SEC epochs.\n\n"
-        "Tap calculations are based on 70 taps per epoch. For best accuracy, "
-        "complete exactly 70 taps within a single epoch.\n\n"
-        "All remaining taps and efficiency are calculated using this model."
+        "After your first Popit tap of the day, send /on to start your personal "
+        "330 SEC epochs.\n\n"
+        "Each epoch is based on 70 taps. For best accuracy, complete exactly "
+        "70 taps within one epoch."
     )
 
 
 async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
+    if not await is_allowed(update):
         return
 
     data = load_data()
@@ -147,17 +155,17 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data={"uid": uid}
     )
 
-    await reply(
+    await send_reply(
         update,
         context,
         "🔔 Notifications ON\n"
-        "⏱️ Your personal 330 SEC epoch cycle has started.\n"
-        "📩 Epoch 1 Ongoing"
+        "⏱️ Personal 330 SEC epoch cycle started.\n"
+        "📩 Epoch 1 Ongoing."
     )
 
 
 async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
+    if not await is_allowed(update):
         return
 
     data = load_data()
@@ -167,11 +175,11 @@ async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data[uid]["notify"] = False
         save_data(data)
 
-    await reply(update, context, "🔕 Notifications OFF. Epoch timing continues.")
+    await send_reply(update, context, "🔕 Notifications OFF. Epoch timing continues.")
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
+    if not await is_allowed(update):
         return
 
     data = load_data()
@@ -186,46 +194,46 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del data[uid]
         save_data(data)
 
-    await reply(update, context, "♻️ Reset complete. Tracking stopped.")
+    await send_reply(update, context, "♻️ Reset complete. Tracking stopped.")
 
 
 async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
+    if not await is_allowed(update):
         return
 
     data = load_data()
     uid = str(update.effective_user.id)
 
     if uid not in data:
-        await reply(update, context, "Use /on first.")
+        await send_reply(update, context, "Use /on first.")
         return
 
     if not context.args:
-        await reply(update, context, "Use /tap add or /tap remove")
+        await send_reply(update, context, "Use /tap add or /tap remove")
         return
 
     if context.args[0] == "add":
         data[uid]["tapped_epochs"] += 1
         save_data(data)
-        await reply(update, context, "✅ One tapped epoch added.")
+        await send_reply(update, context, "✅ One tapped epoch added.")
 
     elif context.args[0] == "remove":
         if data[uid]["tapped_epochs"] > 0:
             data[uid]["tapped_epochs"] -= 1
             save_data(data)
-            await reply(update, context, "➖ One tapped epoch removed.")
+            await send_reply(update, context, "➖ One tapped epoch removed.")
         else:
-            await reply(update, context, "Tapped epochs already zero.")
+            await send_reply(update, context, "Tapped epochs already zero.")
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
+    if not await is_allowed(update):
         return
 
     await send_status(context, update.effective_user.id, force=True)
 
 
-# ---------------- Core Epoch Logic ----------------
+# ---------------- Epoch Logic ----------------
 
 async def send_status(context, user_id, force=False):
     data = load_data()
@@ -235,8 +243,7 @@ async def send_status(context, user_id, force=False):
         return
 
     now = int(time.time())
-    start = data[uid]["cycle_start"]
-    elapsed = now - start
+    elapsed = now - data[uid]["cycle_start"]
 
     epoch = elapsed // EPOCH_SECONDS + 1
     if epoch > TOTAL_EPOCHS:
@@ -266,14 +273,11 @@ async def send_status(context, user_id, force=False):
 
     text = (
         "📊 User 24-Hour Cycle Status\n\n"
-        f"⏱️ Cycle Progress: Epoch {epoch} / {TOTAL_EPOCHS}\n"
-        f"⌛ Remaining in Cycle: {remaining_cycle} epochs\n\n"
-        "👤 User Tapping Progress\n"
+        f"⏱️ Epoch {epoch} / {TOTAL_EPOCHS}\n"
+        f"⌛ Remaining: {remaining_cycle} epochs\n\n"
         f"✅ Tapped Epochs: {tapped}\n"
-        f"🏆 Reward Tier: {tier}\n"
-        f"➡️ Remaining Epochs in This Tier: {remaining_tier}\n\n"
-        "📈 Tap Statistics\n"
-        f"🟢 Total Taps Used: {used_taps}\n"
+        f"🏆 Reward Tier: {tier}\n\n"
+        f"🟢 Used Taps: {used_taps}\n"
         f"🔵 Remaining Taps: {remaining_taps} / {MAX_TAPS}"
     )
 
@@ -290,13 +294,11 @@ async def send_status(context, user_id, force=False):
         reply_markup=keyboard
     )
 
-    if context.bot.get_chat(data[uid]["chat_id"]).type != "private":
+    if msg.chat.type != "private":
         context.application.create_task(
             auto_delete(context, msg.chat_id, msg.message_id)
         )
 
-
-# ---------------- Button Handler ----------------
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -308,16 +310,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in data:
         return
 
-    if query.data == "tapped":
-        data[uid]["current_decision"] = "tapped"
-    else:
-        data[uid]["current_decision"] = "skipped"
-
+    data[uid]["current_decision"] = (
+        "tapped" if query.data == "tapped" else "skipped"
+    )
     save_data(data)
+
     await query.edit_message_reply_markup(None)
 
-
-# ---------------- Epoch Job ----------------
 
 async def epoch_job(context: ContextTypes.DEFAULT_TYPE):
     uid = context.job.data["uid"]
