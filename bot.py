@@ -17,7 +17,7 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 
 DATA_FILE = "data.json"
 
-EPOCH_SECONDS = 300
+EPOCH_SECONDS = 330
 TOTAL_EPOCHS = 288
 TAPS_PER_EPOCH = 70
 MAX_TAPS = 12000
@@ -66,7 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "⏱️ AckiNacki Epoch Timer – Intro\n\n"
         "Start your day normally. After you tap your first Popit for the new day, "
-        "send /on immediately. This sets the start time for your personal 5-minute epochs.\n\n"
+        "send /on immediately. This sets the start time for your personal 5-minute 30 sec epochs.\n\n"
         "Tap calculations are based on a prediction of 70 taps per epoch. For best accuracy, "
         "complete exactly 70 taps within a single epoch.\n\n"
         "All remaining taps and efficiency shown by the bot are calculated using this "
@@ -110,8 +110,8 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🔔 Notifications ON\n"
-        "⏱️ Your personal 5-minute epoch cycle has started.\n"
-        "📩 First update will arrive after 5 minutes."
+        "⏱️ Your personal 330 SEC epoch cycle has started.\n"
+        "📩 Epoch 1 Ongoing."
     )
 
 
