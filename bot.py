@@ -36,11 +36,9 @@ async def is_allowed(update: Update):
     chat = update.effective_chat
     user = update.effective_user
 
-    # DM: allow everyone
     if chat.type == "private":
         return True
 
-    # Group: only owner ID
     return user.id == OWNER_ID
 
 
@@ -114,7 +112,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context,
         "⏱️ AckiNacki Epoch Timer – Intro\n\n"
         "After your first Popit tap of the day, send /on to start your personal "
-        "330 SEC epochs.\n\n"
+        "330 second epochs.\n\n"
         "Each epoch is based on 70 taps. For best accuracy, complete exactly "
         "70 taps within one epoch."
     )
@@ -129,10 +127,8 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     now = int(time.time())
 
-    # ✅ FIX: job bound to CHAT, not user
     job_name = f"epoch_{chat_id}"
 
-    # remove existing job for this chat
     for job in context.job_queue.jobs():
         if job.name == job_name:
             job.schedule_removal()
@@ -155,19 +151,11 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         interval=EPOCH_SECONDS,
         first=EPOCH_SECONDS,
         name=job_name,
-        data={
-            "uid": uid,
-            "chat_id": chat_id
-        }
+        data={"uid": uid}
     )
 
-    await send_reply(
-        update,
-        context,
-        "🔔 Notifications ON\n"
-        "⏱️ Personal 330 SEC epoch cycle started.\n"
-        "📩 Epoch 1 Ongoing."
-    )
+    # ✅ IMPORTANT FIX: show Epoch 1 using same status logic
+    await send_status(context, update.effective_user.id, force=True)
 
 
 async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -192,7 +180,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
 
     if uid in data:
-        job_name = data[uid].get("job_name")
+        job_name = data[uid]["job_name"]
         for job in context.job_queue.jobs():
             if job.name == job_name:
                 job.schedule_removal()
@@ -202,6 +190,8 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_reply(update, context, "♻️ Reset complete. Tracking stopped.")
 
+
+# ---------------- TAP CORE ----------------
 
 async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_allowed(update):
@@ -218,18 +208,30 @@ async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_reply(update, context, "Use /tap add or /tap remove")
         return
 
-    if context.args[0] == "add":
+    action = context.args[0].lower()
+
+    if action == "add":
         data[uid]["tapped_epochs"] += 1
         save_data(data)
         await send_reply(update, context, "✅ One tapped epoch added.")
 
-    elif context.args[0] == "remove":
+    elif action == "remove":
         if data[uid]["tapped_epochs"] > 0:
             data[uid]["tapped_epochs"] -= 1
             save_data(data)
             await send_reply(update, context, "➖ One tapped epoch removed.")
         else:
             await send_reply(update, context, "Tapped epochs already zero.")
+
+
+async def tapadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.args = ["add"]
+    await tap(update, context)
+
+
+async def tapremove(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.args = ["remove"]
+    await tap(update, context)
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -338,7 +340,11 @@ app.add_handler(CommandHandler("on", on))
 app.add_handler(CommandHandler("off", off))
 app.add_handler(CommandHandler("reset", reset))
 app.add_handler(CommandHandler("status", status))
+
 app.add_handler(CommandHandler("tap", tap))
+app.add_handler(CommandHandler("tapadd", tapadd))
+app.add_handler(CommandHandler("tapremove", tapremove))
+
 app.add_handler(CallbackQueryHandler(button_handler))
 
 app.run_polling()
