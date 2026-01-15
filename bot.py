@@ -126,10 +126,13 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = load_data()
     uid = str(update.effective_user.id)
+    chat_id = update.effective_chat.id
     now = int(time.time())
 
-    job_name = f"epoch_{uid}"
+    # ✅ FIX: job bound to CHAT, not user
+    job_name = f"epoch_{chat_id}"
 
+    # remove existing job for this chat
     for job in context.job_queue.jobs():
         if job.name == job_name:
             job.schedule_removal()
@@ -141,7 +144,7 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "current_decision": None,
         "notify": True,
         "active": True,
-        "chat_id": update.effective_chat.id,
+        "chat_id": chat_id,
         "job_name": job_name
     }
 
@@ -152,7 +155,10 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         interval=EPOCH_SECONDS,
         first=EPOCH_SECONDS,
         name=job_name,
-        data={"uid": uid}
+        data={
+            "uid": uid,
+            "chat_id": chat_id
+        }
     )
 
     await send_reply(
