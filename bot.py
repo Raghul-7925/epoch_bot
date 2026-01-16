@@ -17,7 +17,7 @@ from telegram.ext import (
 # ================= CONFIG =================
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-OWNER_ID = 1837260280   # only allowed in groups
+OWNER_ID = 1837260280          # only allowed in groups
 AUTO_DELETE_SECONDS = 320
 
 DATA_FILE = "data.json"
@@ -112,7 +112,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context,
         "⏱️ AckiNacki Epoch Timer – Intro\n\n"
         "After your first Popit tap of the day, send /on to start your personal "
-        "330 second epochs.\n\n"
+        "330-second epochs.\n\n"
         "Each epoch is based on 70 taps. For best accuracy, complete exactly "
         "70 taps within one epoch."
     )
@@ -154,7 +154,6 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data={"uid": uid}
     )
 
-    # ✅ IMPORTANT FIX: show Epoch 1 using same status logic
     await send_status(context, update.effective_user.id, force=True)
 
 
@@ -191,7 +190,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_reply(update, context, "♻️ Reset complete. Tracking stopped.")
 
 
-# ---------------- TAP CORE ----------------
+# ---------------- TAP ----------------
 
 async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_allowed(update):
@@ -251,11 +250,30 @@ async def send_status(context, user_id, force=False):
         return
 
     now = int(time.time())
-    elapsed = now - data[uid]["cycle_start"]
+    start = data[uid]["cycle_start"]
+    elapsed = now - start
+
+    # 🔁 Group-only auto restart after 288
+    if elapsed // EPOCH_SECONDS >= TOTAL_EPOCHS:
+        chat_id = data[uid]["chat_id"]
+
+        if chat_id < 0:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="✅ 24-hour cycle completed.\n🔁 Starting a new cycle from Epoch 1."
+            )
+
+            data[uid]["cycle_start"] = now
+            data[uid]["last_epoch_sent"] = 0
+            data[uid]["current_decision"] = None
+            data[uid]["tapped_epochs"] = 0
+            save_data(data)
+
+            elapsed = 0
+        else:
+            return
 
     epoch = elapsed // EPOCH_SECONDS + 1
-    if epoch > TOTAL_EPOCHS:
-        epoch = TOTAL_EPOCHS
 
     if not force and epoch == data[uid]["last_epoch_sent"]:
         return
