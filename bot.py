@@ -30,7 +30,7 @@ MAX_TAPS = 12000
 # =========================================
 
 
-# ---------------- Permission Check ----------------
+# ---------------- Permissions ----------------
 
 async def is_allowed(update: Update):
     chat = update.effective_chat
@@ -44,24 +44,12 @@ async def is_allowed(update: Update):
 
 # ---------------- Auto Delete ----------------
 
-async def auto_delete(context, chat_id, message_id, delay=AUTO_DELETE_SECONDS):
-    await asyncio.sleep(delay)
+async def auto_delete(context, chat_id, message_id):
+    await asyncio.sleep(AUTO_DELETE_SECONDS)
     try:
         await context.bot.delete_message(chat_id, message_id)
     except:
         pass
-
-
-async def send_reply(update, context, text, reply_markup=None):
-    msg = await update.effective_chat.send_message(
-        text=text,
-        reply_markup=reply_markup
-    )
-    if update.effective_chat.type != "private":
-        context.application.create_task(
-            auto_delete(context, msg.chat_id, msg.message_id)
-        )
-    return msg
 
 
 # ---------------- Storage ----------------
@@ -80,7 +68,7 @@ def save_data(data):
 
 # ---------------- Reward Tier ----------------
 
-def get_reward_tier(u):
+def get_reward_tier(tapped):
     tiers = [
         (1, 14, "Extremely High"),
         (15, 28, "Very High"),
@@ -96,7 +84,7 @@ def get_reward_tier(u):
         (155, 168, "Effectively Zero"),
     ]
     for a, b, name in tiers:
-        if a <= u <= b:
+        if a <= tapped <= b:
             return a, b, name
     return None, None, "Inefficient"
 
@@ -107,14 +95,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_allowed(update):
         return
 
-    await send_reply(
-        update,
-        context,
-        "⏱️ AckiNacki Epoch Timer – Intro\n\n"
-        "After your first Popit tap of the day, send /on to start your personal "
-        "330-second epochs.\n\n"
-        "Each epoch is based on 70 taps. For best accuracy, complete exactly "
-        "70 taps within one epoch."
+    await update.effective_chat.send_message(
+        "⏱️ AckiNacki Epoch Timer\n\n"
+        "After your first Popit tap of the day, send /on.\n"
+        "Epochs are 330 seconds long.\n\n"
+        "Each epoch assumes 70 taps.\n"
+        "Tap exactly 70 times per epoch for best accuracy."
     )
 
 
@@ -123,8 +109,7 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data = load_data()
-    uid = str(update.effective_user.id)
-    chat_id = update.effective_chat.id
+    chat_id = str(update.effective_chat.id)
     now = int(time.time())
 
     job_name = f"epoch_{chat_id}"
@@ -133,28 +118,27 @@ async def on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if job.name == job_name:
             job.schedule_removal()
 
-    data[uid] = {
+    data[chat_id] = {
         "cycle_start": now,
         "last_epoch_sent": 0,
         "tapped_epochs": 0,
         "current_decision": None,
         "notify": True,
-        "active": True,
-        "chat_id": chat_id,
-        "job_name": job_name
+        "job_name": job_name,
+        "chat_type": update.effective_chat.type,
     }
 
     save_data(data)
 
     context.job_queue.run_repeating(
-        callback=epoch_job,
+        epoch_job,
         interval=EPOCH_SECONDS,
         first=EPOCH_SECONDS,
         name=job_name,
-        data={"uid": uid}
+        data={"chat_id": chat_id},
     )
 
-    await send_status(context, update.effective_user.id, force=True)
+    await send_status(context, chat_id, force=True)
 
 
 async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,13 +146,13 @@ async def off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data = load_data()
-    uid = str(update.effective_user.id)
+    chat_id = str(update.effective_chat.id)
 
-    if uid in data:
-        data[uid]["notify"] = False
+    if chat_id in data:
+        data[chat_id]["notify"] = False
         save_data(data)
 
-    await send_reply(update, context, "🔕 Notifications OFF. Epoch timing continues.")
+    await update.effective_chat.send_message("🔕 Notifications paused.")
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -176,51 +160,44 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data = load_data()
-    uid = str(update.effective_user.id)
+    chat_id = str(update.effective_chat.id)
 
-    if uid in data:
-        job_name = data[uid]["job_name"]
+    if chat_id in data:
+        job_name = data[chat_id]["job_name"]
         for job in context.job_queue.jobs():
             if job.name == job_name:
                 job.schedule_removal()
 
-        del data[uid]
+        del data[chat_id]
         save_data(data)
 
-    await send_reply(update, context, "♻️ Reset complete. Tracking stopped.")
+    await update.effective_chat.send_message("♻️ Reset complete.")
 
 
-# ---------------- TAP ----------------
+# ---------------- Manual Tap ----------------
 
 async def tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_allowed(update):
         return
 
     data = load_data()
-    uid = str(update.effective_user.id)
+    chat_id = str(update.effective_chat.id)
 
-    if uid not in data:
-        await send_reply(update, context, "Use /on first.")
+    if chat_id not in data:
+        await update.effective_chat.send_message("Use /on first.")
         return
 
     if not context.args:
-        await send_reply(update, context, "Use /tap add or /tap remove")
         return
 
     action = context.args[0].lower()
 
     if action == "add":
-        data[uid]["tapped_epochs"] += 1
-        save_data(data)
-        await send_reply(update, context, "✅ One tapped epoch added.")
+        data[chat_id]["tapped_epochs"] += 1
+    elif action == "remove" and data[chat_id]["tapped_epochs"] > 0:
+        data[chat_id]["tapped_epochs"] -= 1
 
-    elif action == "remove":
-        if data[uid]["tapped_epochs"] > 0:
-            data[uid]["tapped_epochs"] -= 1
-            save_data(data)
-            await send_reply(update, context, "➖ One tapped epoch removed.")
-        else:
-            await send_reply(update, context, "Tapped epochs already zero.")
+    save_data(data)
 
 
 async def tapadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -237,74 +214,60 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_allowed(update):
         return
 
-    await send_status(context, update.effective_user.id, force=True)
+    await send_status(context, str(update.effective_chat.id), force=True)
 
 
-# ---------------- Epoch Logic ----------------
+# ---------------- Epoch Core ----------------
 
-async def send_status(context, user_id, force=False):
+async def send_status(context, chat_id, force=False):
     data = load_data()
-    uid = str(user_id)
 
-    if uid not in data or not data[uid]["active"]:
+    if chat_id not in data:
         return
 
+    entry = data[chat_id]
     now = int(time.time())
-    start = data[uid]["cycle_start"]
-    elapsed = now - start
+    elapsed = now - entry["cycle_start"]
 
-    # 🔁 Group-only auto restart after 288
+    # Group auto-restart
     if elapsed // EPOCH_SECONDS >= TOTAL_EPOCHS:
-        chat_id = data[uid]["chat_id"]
-
-        if chat_id < 0:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="✅ 24-hour cycle completed.\n🔁 Starting a new cycle from Epoch 1."
-            )
-
-            data[uid]["cycle_start"] = now
-            data[uid]["last_epoch_sent"] = 0
-            data[uid]["current_decision"] = None
-            data[uid]["tapped_epochs"] = 0
+        if entry["chat_type"] != "private":
+            entry["cycle_start"] = now
+            entry["last_epoch_sent"] = 0
+            entry["current_decision"] = None
+            entry["tapped_epochs"] = 0
             save_data(data)
-
             elapsed = 0
         else:
             return
 
     epoch = elapsed // EPOCH_SECONDS + 1
 
-    if not force and epoch == data[uid]["last_epoch_sent"]:
+    if not force and epoch == entry["last_epoch_sent"]:
         return
 
-    if data[uid]["current_decision"] == "tapped":
-        data[uid]["tapped_epochs"] += 1
+    if entry["current_decision"] == "tapped":
+        entry["tapped_epochs"] += 1
 
-    data[uid]["current_decision"] = None
-    data[uid]["last_epoch_sent"] = epoch
+    entry["current_decision"] = None
+    entry["last_epoch_sent"] = epoch
     save_data(data)
 
-    if not data[uid]["notify"] and not force:
+    if not entry["notify"] and not force:
         return
 
-    remaining_cycle = TOTAL_EPOCHS - epoch
-    tapped = data[uid]["tapped_epochs"]
-
+    tapped = entry["tapped_epochs"]
     ts, te, tier = get_reward_tier(tapped)
-    remaining_tier = te - tapped if ts else 0
 
     used_taps = tapped * TAPS_PER_EPOCH
     remaining_taps = max(MAX_TAPS - used_taps, 0)
 
     text = (
-        "📊 User 24-Hour Cycle Status\n\n"
-        f"⏱️ Epoch {epoch} / {TOTAL_EPOCHS}\n"
-        f"⌛ Remaining: {remaining_cycle} epochs\n\n"
-        f"✅ Tapped Epochs: {tapped}\n"
-        f"🏆 Reward Tier: {tier}\n\n"
-        f"🟢 Used Taps: {used_taps}\n"
-        f"🔵 Remaining Taps: {remaining_taps} / {MAX_TAPS}"
+        f"📊 Epoch {epoch} / {TOTAL_EPOCHS}\n\n"
+        f"Tapped epochs: {tapped}\n"
+        f"Reward tier: {tier}\n\n"
+        f"Used taps: {used_taps}\n"
+        f"Remaining taps: {remaining_taps}"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -315,12 +278,12 @@ async def send_status(context, user_id, force=False):
     ])
 
     msg = await context.bot.send_message(
-        chat_id=data[uid]["chat_id"],
+        chat_id=int(chat_id),
         text=text,
         reply_markup=keyboard
     )
 
-    if msg.chat.type != "private":
+    if entry["chat_type"] != "private":
         context.application.create_task(
             auto_delete(context, msg.chat_id, msg.message_id)
         )
@@ -330,13 +293,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    uid = str(query.from_user.id)
     data = load_data()
+    chat_id = str(query.message.chat.id)
 
-    if uid not in data:
+    if chat_id not in data:
         return
 
-    data[uid]["current_decision"] = (
+    data[chat_id]["current_decision"] = (
         "tapped" if query.data == "tapped" else "skipped"
     )
     save_data(data)
@@ -345,8 +308,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def epoch_job(context: ContextTypes.DEFAULT_TYPE):
-    uid = context.job.data["uid"]
-    await send_status(context, uid)
+    chat_id = context.job.data["chat_id"]
+    await send_status(context, chat_id)
 
 
 # ---------------- App ----------------
